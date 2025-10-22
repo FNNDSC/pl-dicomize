@@ -19,6 +19,7 @@ from datetime import datetime
 import numpy as np
 from PIL import Image
 from pydicom.sequence import Sequence
+import hashlib
 
 __version__ = '1.0.0'
 
@@ -106,6 +107,27 @@ def read_dicom(dicom_path):
 
 def format_string(s):
     return s.upper().replace(" ", "_")
+
+def anonymize_uid_deterministic(uid: str) -> str:
+    # Create a SHA-256 hash of the UID
+    hash_bytes = hashlib.sha256(uid.encode()).hexdigest()
+
+    # Convert hash to digits (map hex 0–f → 0–9)
+    digits = ''.join(str(int(c, 16) % 10) for c in hash_bytes)
+
+    # Repeat the digits if needed to match the UID length (since hashes are shorter)
+    digits *= (len(uid) // len(digits)) + 1
+
+    # Build anonymized UID, preserving dots and length
+    result = []
+    digit_index = 0
+    for char in uid:
+        if char == '.':
+            result.append('.')
+        else:
+            result.append(digits[digit_index])
+            digit_index += 1
+    return ''.join(result[:len(uid)])
 
 def apply_json_tags(ds, json_content):
     if not isinstance(json_content, dict):
@@ -214,6 +236,10 @@ def create_dicom(json_data, output_path=None, dicom_path=None, image_path=None, 
         ds.BitsStored = orig_ds.BitsStored
         ds.HighBit = orig_ds.HighBit
         ds.PixelRepresentation = orig_ds.PixelRepresentation
+        ds.StudyInstanceUID = anonymize_uid_deterministic(orig_ds.StudyInstanceUID)
+        ds.SeriesInstanceUID = anonymize_uid_deterministic(orig_ds.SeriesInstanceUID)
+        ds.InstanceNumber = orig_ds.InstanceNumber
+        ds.Modality = orig_ds.Modality
         if tags_to_copy:
             copy_selected_tags(orig_ds, ds, tags_to_copy)
     else:
