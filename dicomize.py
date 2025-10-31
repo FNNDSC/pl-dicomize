@@ -130,6 +130,19 @@ def anonymize_uid_deterministic(uid: str) -> str:
     return ''.join(result[:len(uid)])
 
 def apply_json_tags(ds, json_content):
+
+    concept_item = Dataset()
+    ds.ValueType = "CONTAINER"
+    concept_item.CodeValue = "LLD measurements"
+    concept_item.CodingSchemeDesignator = format_string("LLD measurements")
+    concept_item.CodeMeaning = "LLD measurements"
+
+    ds.ConceptNameCodeSequence = Sequence([concept_item])
+    ds.ContinuityOfContent = "SEPARATE"
+    ds.CompletionFlag = "COMPLETE"
+    ds.VerificationFlag = "VERIFIED"
+    ds.PerformedProcedureCodeSequence = Sequence([])
+
     if not isinstance(json_content, dict):
         raise ValueError("JSON content must be a dictionary of tag names and values.")
 
@@ -175,6 +188,7 @@ def create_base_dataset():
     file_meta.ImplementationClassUID = generate_uid()
 
     ds = FileDataset(None, {}, file_meta=file_meta, preamble=b"\0" * 128)
+    ds.SOPClassUID = "1.2.840.10008.5.1.4.1.1.88.11"
     ds.SOPInstanceUID = generate_uid()
     ds.StudyInstanceUID = generate_uid()
     ds.SeriesInstanceUID = generate_uid()
@@ -183,6 +197,7 @@ def create_base_dataset():
     ds.ContentTime = datetime.now().strftime('%H%M%S')
     ds.is_little_endian = True
     ds.is_implicit_VR = False
+    ds.Manufacturer = "ChRIS"
     return ds
 
 
