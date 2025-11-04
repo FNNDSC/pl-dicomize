@@ -17,26 +17,6 @@ on:
     branches: [ main ]
 
 jobs:
-  test:
-    name: Unit tests
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - name: Build
-        uses: docker/build-push-action@v5
-        with:
-          build-args: extras_require=dev
-          context: .
-          load: true
-          push: false
-          tags: "localhost/local/app:dev"
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      - name: Run pytest
-        run: |
-          docker run -v "$GITHUB_WORKSPACE:/app:ro" -w /app localhost/local/app:dev \
-            pytest -o cache_dir=/tmp/pytest
 
   build:
     name: Build

@@ -21,7 +21,7 @@ from PIL import Image
 from pydicom.sequence import Sequence
 import hashlib
 
-__version__ = '1.0.0'
+__version__ = '1.0.1'
 
 DISPLAY_TITLE = r"""
        _           _ _                     _         
@@ -68,6 +68,12 @@ parser.add_argument(
     type=str,
     default="empty",
     help="Create new DICOM from existing: 1) dicom 2) image 3) empty"
+)
+parser.add_argument(
+    '--conceptName',
+    type=str,
+    default="",
+    help="Specify the header of concept sequence. Required for SR generation"
 )
 
 def serialize_json(options, inputdir: Path):
@@ -129,13 +135,12 @@ def anonymize_uid_deterministic(uid: str) -> str:
             digit_index += 1
     return ''.join(result[:len(uid)])
 
-def apply_json_tags(ds, json_content):
-
+def apply_concept_info(ds, concept_name):
     concept_item = Dataset()
     ds.ValueType = "CONTAINER"
-    concept_item.CodeValue = "LLD measurements"
-    concept_item.CodingSchemeDesignator = format_string("LLD measurements")
-    concept_item.CodeMeaning = "LLD measurements"
+    concept_item.CodeValue = concept_name
+    concept_item.CodingSchemeDesignator = format_string(concept_name)
+    concept_item.CodeMeaning = concept_name
 
     ds.ConceptNameCodeSequence = Sequence([concept_item])
     ds.ContinuityOfContent = "SEPARATE"
@@ -143,6 +148,7 @@ def apply_json_tags(ds, json_content):
     ds.VerificationFlag = "VERIFIED"
     ds.PerformedProcedureCodeSequence = Sequence([])
 
+def apply_json_tags(ds, json_content):
     if not isinstance(json_content, dict):
         raise ValueError("JSON content must be a dictionary of tag names and values.")
 
@@ -188,11 +194,13 @@ def create_base_dataset():
     file_meta.ImplementationClassUID = generate_uid()
 
     ds = FileDataset(None, {}, file_meta=file_meta, preamble=b"\0" * 128)
+
+    # Default SR SOP class uid
     ds.SOPClassUID = "1.2.840.10008.5.1.4.1.1.88.11"
     ds.SOPInstanceUID = generate_uid()
     ds.StudyInstanceUID = generate_uid()
     ds.SeriesInstanceUID = generate_uid()
-    ds.Modality = "OT"
+    ds.Modality = "SR"
     ds.ContentDate = datetime.now().strftime('%Y%m%d')
     ds.ContentTime = datetime.now().strftime('%H%M%S')
     ds.is_little_endian = True
@@ -225,7 +233,7 @@ def save_dataset(ds, output_path):
     ds.save_as(output_path, write_like_original=False)
     print(f"Saved DICOM to: ----> {output_path} <----\n")
 
-def create_dicom(json_data, output_path=None, dicom_path=None, image_path=None, image_type=None, tags_to_copy=None):
+def create_dicom(json_data, output_path=None, dicom_path=None, image_path=None, image_type=None, tags_to_copy=None, concept_name=None):
     ds = create_base_dataset()
 
     # Use image pixel data
@@ -242,6 +250,8 @@ def create_dicom(json_data, output_path=None, dicom_path=None, image_path=None, 
         output_path = str(output_path).replace(image_type,"dcm")
     elif dicom_path:
         orig_ds = read_dicom(dicom_path)
+
+        # Keep bare minimum headers from original dicom for image rendering
         ds.PixelData = orig_ds.pixel_array.tobytes()
         ds.Rows = orig_ds.Rows
         ds.Columns = orig_ds.Columns
@@ -251,10 +261,18 @@ def create_dicom(json_data, output_path=None, dicom_path=None, image_path=None, 
         ds.BitsStored = orig_ds.BitsStored
         ds.HighBit = orig_ds.HighBit
         ds.PixelRepresentation = orig_ds.PixelRepresentation
-        ds.StudyInstanceUID = anonymize_uid_deterministic(orig_ds.StudyInstanceUID)
-        ds.SeriesInstanceUID = anonymize_uid_deterministic(orig_ds.SeriesInstanceUID)
+        ds.SeriesNumber = orig_ds.SeriesNumber
+        ds.SOPClassUID = orig_ds.SOPClassUID
         ds.InstanceNumber = orig_ds.InstanceNumber
         ds.Modality = orig_ds.Modality
+
+        # Anonymize content date and time
+        ds.ContentDate = ""
+        ds.ContentTime = ""
+
+        # Anonymize study and series uids but maintain the hierarchy
+        ds.StudyInstanceUID = anonymize_uid_deterministic(orig_ds.StudyInstanceUID)
+        ds.SeriesInstanceUID = anonymize_uid_deterministic(orig_ds.SeriesInstanceUID)
         if tags_to_copy:
             copy_selected_tags(orig_ds, ds, tags_to_copy)
     else:
@@ -265,6 +283,9 @@ def create_dicom(json_data, output_path=None, dicom_path=None, image_path=None, 
         ds.HighBit = 7
         ds.PixelRepresentation = 0
         output_path = os.path.join(output_path,f"0001-{ds.SOPInstanceUID}.dcm")
+
+    if concept_name:
+        apply_concept_info(ds, concept_name)
 
     # Apply JSON metadata
     apply_json_tags(ds, json_data)
@@ -314,7 +335,8 @@ def main(options: Namespace, inputdir: Path, outputdir: Path):
                 output_path=outputdir,
                 dicom_path=None,
                 image_path=None,
-                tags_to_copy=None
+                tags_to_copy=None,
+                concept_name=options.conceptName
             )
         case "dicom":
             # Create new DICOMs from existing ones
@@ -326,6 +348,7 @@ def main(options: Namespace, inputdir: Path, outputdir: Path):
                     dicom_path=input_file,
                     image_path=None,
                     tags_to_copy=tags,
+                    concept_name=options.conceptName
                 )
         case "image":
             # Create new DICOMs from existing ones
@@ -338,6 +361,7 @@ def main(options: Namespace, inputdir: Path, outputdir: Path):
                     image_path=input_file,
                     image_type=options.pattern,
                     tags_to_copy=None,
+                    concept_name=options.conceptName
                 )
         case _:
             print(f"Unknown dicom creation mode specified: {options.createFrom}")
