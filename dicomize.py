@@ -21,7 +21,7 @@ from PIL import Image
 from pydicom.sequence import Sequence
 import hashlib
 
-__version__ = '1.0.1'
+__version__ = '1.0.2'
 
 DISPLAY_TITLE = r"""
        _           _ _                     _         
@@ -114,26 +114,34 @@ def read_dicom(dicom_path):
 def format_string(s):
     return s.upper().replace(" ", "_")
 
-def anonymize_uid_deterministic(uid: str) -> str:
-    # Create a SHA-256 hash of the UID
+def anonymize_uid_deterministic(uid: str, root: str = "2.25.") -> str:
+    """
+    Deterministically anonymize a DICOM UID while ensuring it remains valid.
+
+    Args:
+        uid: Original DICOM UID string.
+        root: Root prefix for anonymized UIDs (default '2.25.').
+
+    Returns:
+        A valid anonymized DICOM UID (<= 64 chars).
+    """
+    # Create SHA-256 hash
     hash_bytes = hashlib.sha256(uid.encode()).hexdigest()
 
-    # Convert hash to digits (map hex 0–f → 0–9)
+    # Convert hash to digits (0–9)
     digits = ''.join(str(int(c, 16) % 10) for c in hash_bytes)
 
-    # Repeat the digits if needed to match the UID length (since hashes are shorter)
-    digits *= (len(uid) // len(digits)) + 1
+    # Combine root and truncated digits
+    anonymized_uid = root + digits
 
-    # Build anonymized UID, preserving dots and length
-    result = []
-    digit_index = 0
-    for char in uid:
-        if char == '.':
-            result.append('.')
-        else:
-            result.append(digits[digit_index])
-            digit_index += 1
-    return ''.join(result[:len(uid)])
+    # Ensure it’s <= 64 characters (required by DICOM)
+    anonymized_uid = anonymized_uid[:64]
+
+    # Strip any trailing dot
+    anonymized_uid = anonymized_uid.rstrip('.')
+
+    return anonymized_uid
+
 
 def apply_concept_info(ds, concept_name):
     concept_item = Dataset()
@@ -252,19 +260,29 @@ def create_dicom(json_data, output_path=None, dicom_path=None, image_path=None, 
         orig_ds = read_dicom(dicom_path)
 
         # Keep bare minimum headers from original dicom for image rendering
-        ds.PixelData = orig_ds.pixel_array.tobytes()
-        ds.Rows = orig_ds.Rows
-        ds.Columns = orig_ds.Columns
-        ds.PhotometricInterpretation = orig_ds.PhotometricInterpretation
-        ds.SamplesPerPixel = orig_ds.SamplesPerPixel
-        ds.BitsAllocated = orig_ds.BitsAllocated
-        ds.BitsStored = orig_ds.BitsStored
-        ds.HighBit = orig_ds.HighBit
-        ds.PixelRepresentation = orig_ds.PixelRepresentation
-        ds.SeriesNumber = orig_ds.SeriesNumber
-        ds.SOPClassUID = orig_ds.SOPClassUID
-        ds.InstanceNumber = orig_ds.InstanceNumber
-        ds.Modality = orig_ds.Modality
+        #ds.PixelData = orig_ds.pixel_array.tobytes()
+        fields = [
+            "PixelData",
+            "Rows",
+            "Columns",
+            "PhotometricInterpretation",
+            "SamplesPerPixel",
+            "BitsAllocated",
+            "BitsStored",
+            "HighBit",
+            "PixelRepresentation",
+            "SeriesNumber",
+            "SOPClassUID",
+            "InstanceNumber",
+            "Modality",
+            "NumberOfFrames"
+        ]
+
+        for f in fields:
+            try:
+                setattr(ds, f, getattr(orig_ds, f))
+            except Exception as e:
+                print(f"Warning: could not copy {f} — {e}")
 
         # Anonymize content date and time
         ds.ContentDate = ""
@@ -301,8 +319,8 @@ def create_dicom(json_data, output_path=None, dicom_path=None, image_path=None, 
     parser=parser,
     title='A DICOM generator plugin',
     category='',  # ref. https://chrisstore.co/plugins
-    min_memory_limit='100Mi',  # supported units: Mi, Gi
-    min_cpu_limit='1000m',  # millicores, e.g. "1000m" = 1 CPU core
+    min_memory_limit='1000Mi',  # supported units: Mi, Gi
+    min_cpu_limit='2000m',  # millicores, e.g. "1000m" = 1 CPU core
     min_gpu_limit=0  # set min_gpu_limit=1 to enable GPU
 )
 def main(options: Namespace, inputdir: Path, outputdir: Path):
@@ -340,7 +358,7 @@ def main(options: Namespace, inputdir: Path, outputdir: Path):
             )
         case "dicom":
             # Create new DICOMs from existing ones
-            mapper = PathMapper.file_mapper(inputdir, outputdir, glob=f"**/*{options.pattern}", fail_if_empty=False)
+            mapper = PathMapper.file_mapper(inputdir, outputdir, glob=f"**/*{options.pattern}", fail_if_empty=True)
             for input_file, output_file in mapper:
                 create_dicom(
                     json_data=json_dict,
@@ -352,7 +370,7 @@ def main(options: Namespace, inputdir: Path, outputdir: Path):
                 )
         case "image":
             # Create new DICOMs from existing ones
-            mapper = PathMapper.file_mapper(inputdir, outputdir, glob=f"**/*{options.pattern}", fail_if_empty=False)
+            mapper = PathMapper.file_mapper(inputdir, outputdir, glob=f"**/*{options.pattern}", fail_if_empty=True)
             for input_file, output_file in mapper:
                 create_dicom(
                     json_data=json_dict,
