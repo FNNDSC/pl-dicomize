@@ -20,8 +20,9 @@ import numpy as np
 from PIL import Image
 from pydicom.sequence import Sequence
 import hashlib
+import uuid
 
-__version__ = '1.0.2'
+__version__ = '1.0.3'
 
 DISPLAY_TITLE = r"""
        _           _ _                     _         
@@ -114,34 +115,15 @@ def read_dicom(dicom_path):
 def format_string(s):
     return s.upper().replace(" ", "_")
 
-def anonymize_uid_deterministic(uid: str, root: str = "2.25.") -> str:
-    """
-    Deterministically anonymize a DICOM UID while ensuring it remains valid.
 
-    Args:
-        uid: Original DICOM UID string.
-        root: Root prefix for anonymized UIDs (default '2.25.').
-
-    Returns:
-        A valid anonymized DICOM UID (<= 64 chars).
-    """
-    # Create SHA-256 hash
-    hash_bytes = hashlib.sha256(uid.encode()).hexdigest()
-
-    # Convert hash to digits (0–9)
-    digits = ''.join(str(int(c, 16) % 10) for c in hash_bytes)
-
-    # Combine root and truncated digits
-    anonymized_uid = root + digits
-
-    # Ensure it’s <= 64 characters (required by DICOM)
-    anonymized_uid = anonymized_uid[:64]
-
-    # Strip any trailing dot
-    anonymized_uid = anonymized_uid.rstrip('.')
-
-    return anonymized_uid
-
+def anonymize_uid_deterministic(seed: str, root: str = "2.25.") -> str:
+    """Generate a deterministic, valid DICOM UID from an input string."""
+    u = uuid.uuid5(uuid.NAMESPACE_URL, seed)
+    # Convert UUID to digits and remove leading zeros
+    digits = str(u.int).lstrip("0")
+    # Concatenate and enforce 64-char limit
+    uid = (root + digits)[:64].rstrip(".")
+    return uid
 
 def apply_concept_info(ds, concept_name):
     concept_item = Dataset()
@@ -260,9 +242,10 @@ def create_dicom(json_data, output_path=None, dicom_path=None, image_path=None, 
         orig_ds = read_dicom(dicom_path)
 
         # Keep bare minimum headers from original dicom for image rendering
+        arr = np.asarray(orig_ds.pixel_array)
+        ds.PixelData = arr.tobytes(order='C')
         #ds.PixelData = orig_ds.pixel_array.tobytes()
         fields = [
-            "PixelData",
             "Rows",
             "Columns",
             "PhotometricInterpretation",
