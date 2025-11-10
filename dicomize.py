@@ -22,7 +22,7 @@ from pydicom.sequence import Sequence
 import hashlib
 import uuid
 
-__version__ = '1.0.3'
+__version__ = '1.0.4'
 
 DISPLAY_TITLE = r"""
        _           _ _                     _         
@@ -174,6 +174,7 @@ def apply_json_tags(ds, json_content):
 
         # Create the full ContentSequence (with multiple items if needed)
         ds.ContentSequence = Sequence(content_list)
+        ds.Manufacturer = "ChRIS"
 
 
 def create_base_dataset():
@@ -220,13 +221,22 @@ def add_dummy_pixel(ds):
 
 
 def save_dataset(ds, output_path):
-    ds.save_as(output_path, write_like_original=False)
+    ds.save_as(output_path)
     print(f"Saved DICOM to: ----> {output_path} <----\n")
 
-def create_dicom(json_data, output_path=None, dicom_path=None, image_path=None, image_type=None, tags_to_copy=None, concept_name=None):
+def create_dicom(
+        json_data: dict,
+        output_path: Path=None,
+        dicom_path: Path=None,
+        image_path: Path=None,
+        image_type: str=None,
+        tags_to_copy: str=None,
+        concept_name: str=None
+):
+    """Main DICOM creation logic."""
     ds = create_base_dataset()
 
-    # Use image pixel data
+    # Create dicom from an image
     if image_path:
         pixel_data = load_image(image_path)
         ds.Rows, ds.Columns = pixel_data.shape
@@ -238,17 +248,17 @@ def create_dicom(json_data, output_path=None, dicom_path=None, image_path=None, 
         ds.PixelRepresentation = 0
         ds.PixelData = pixel_data.tobytes()
         output_path = str(output_path).replace(image_type,"dcm")
-    elif dicom_path:
-        orig_ds = read_dicom(dicom_path)
 
-        # Keep bare minimum headers from original dicom for image rendering
-        arr = np.asarray(orig_ds.pixel_array)
-        ds.PixelData = arr.tobytes(order='C')
-        #ds.PixelData = orig_ds.pixel_array.tobytes()
+    # Create dicom from existing dicom
+    elif dicom_path:
+        ds = read_dicom(dicom_path)
+
         fields = [
+            "PixelData",
             "Rows",
             "Columns",
             "PhotometricInterpretation",
+            "FieldOfViewDimensions",
             "SamplesPerPixel",
             "BitsAllocated",
             "BitsStored",
@@ -258,24 +268,31 @@ def create_dicom(json_data, output_path=None, dicom_path=None, image_path=None, 
             "SOPClassUID",
             "InstanceNumber",
             "Modality",
-            "NumberOfFrames"
+            "NumberOfFrames",
+            "StudyInstanceUID",
+            "SeriesInstanceUID"
         ]
 
-        for f in fields:
-            try:
-                setattr(ds, f, getattr(orig_ds, f))
-            except Exception as e:
-                print(f"Warning: could not copy {f} — {e}")
-
-        # Anonymize content date and time
-        ds.ContentDate = ""
-        ds.ContentTime = ""
-
-        # Anonymize study and series uids but maintain the hierarchy
-        ds.StudyInstanceUID = anonymize_uid_deterministic(orig_ds.StudyInstanceUID)
-        ds.SeriesInstanceUID = anonymize_uid_deterministic(orig_ds.SeriesInstanceUID)
+        # copy additional tags specified to preserve from CLI
         if tags_to_copy:
-            copy_selected_tags(orig_ds, ds, tags_to_copy)
+            for tag in tags_to_copy:
+                fields.append(tag)
+
+        all_tags = [elem.keyword for elem in ds if elem.keyword]
+
+        for tag in all_tags:
+            if tag not in fields:
+                delattr(ds, tag)
+            else:
+                print(f"Preserved tag: {tag}")
+
+        ds.remove_private_tags()
+
+        ds.StudyInstanceUID = anonymize_uid_deterministic(ds.StudyInstanceUID)
+        ds.SeriesInstanceUID = anonymize_uid_deterministic(ds.SeriesInstanceUID)
+        ds.SOPInstanceUID = generate_uid()
+
+    # Create Structure Report from JSON
     else:
         ds.SamplesPerPixel = 1
         ds.PhotometricInterpretation = "MONOCHROME2"
@@ -303,19 +320,10 @@ def create_dicom(json_data, output_path=None, dicom_path=None, image_path=None, 
     title='A DICOM generator plugin',
     category='',  # ref. https://chrisstore.co/plugins
     min_memory_limit='1000Mi',  # supported units: Mi, Gi
-    min_cpu_limit='2000m',  # millicores, e.g. "1000m" = 1 CPU core
+    min_cpu_limit='1000m',  # millicores, e.g. "1000m" = 1 CPU core
     min_gpu_limit=0  # set min_gpu_limit=1 to enable GPU
 )
 def main(options: Namespace, inputdir: Path, outputdir: Path):
-    """
-    *ChRIS* plugins usually have two positional arguments: an **input directory** containing
-    input files and an **output directory** where to write output files. Command-line arguments
-    are passed to this main method implicitly when ``main()`` is called below without parameters.
-
-    :param options: non-positional arguments parsed by the parser given to @chris_plugin
-    :param inputdir: directory containing (read-only) input files
-    :param outputdir: directory where to write output files
-    """
 
     print(DISPLAY_TITLE)
 
@@ -323,49 +331,29 @@ def main(options: Namespace, inputdir: Path, outputdir: Path):
     tags = options.copy_tags.split(",") if options.copy_tags else []
 
     # Serialize JSON data from CLI args or json file
-    json_dict = serialize_json(options, inputdir)
+    json_data = serialize_json(options, inputdir)
 
     # handles multiple use cases of the plugin
-    # 1) Create empty DICOM
+    # 1) Create empty DICOM (Structured Reports)
     # 2) Create new DICOM from existing DICOM
     # 3) Create new DICOM from existing image
     match options.createFrom:
         case "empty":
-            create_dicom(
-                json_data=json_dict,
-                output_path=outputdir,
-                dicom_path=None,
-                image_path=None,
-                tags_to_copy=None,
-                concept_name=options.conceptName
-            )
-        case "dicom":
-            # Create new DICOMs from existing ones
+            create_dicom(json_data, outputdir, concept_name=options.conceptName)
+        case "dicom" | "image":
             mapper = PathMapper.file_mapper(inputdir, outputdir, glob=f"**/*{options.pattern}", fail_if_empty=True)
-            for input_file, output_file in mapper:
+            for src, dst in mapper:
                 create_dicom(
-                    json_data=json_dict,
-                    output_path=output_file,
-                    dicom_path=input_file,
-                    image_path=None,
+                    json_data,
+                    output_path=dst,
+                    dicom_path=src if options.createFrom == "dicom" else None,
+                    image_path=src if options.createFrom == "image" else None,
+                    image_type=options.pattern if options.createFrom == "image" else None,
                     tags_to_copy=tags,
-                    concept_name=options.conceptName
-                )
-        case "image":
-            # Create new DICOMs from existing ones
-            mapper = PathMapper.file_mapper(inputdir, outputdir, glob=f"**/*{options.pattern}", fail_if_empty=True)
-            for input_file, output_file in mapper:
-                create_dicom(
-                    json_data=json_dict,
-                    output_path=output_file,
-                    dicom_path=None,
-                    image_path=input_file,
-                    image_type=options.pattern,
-                    tags_to_copy=None,
-                    concept_name=options.conceptName
+                    concept_name=options.conceptName,
                 )
         case _:
-            print(f"Unknown dicom creation mode specified: {options.createFrom}")
+            print(f"Unknown --createFrom mode: {options.createFrom}")
 
 
 
