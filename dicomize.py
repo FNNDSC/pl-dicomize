@@ -22,7 +22,7 @@ from pydicom.sequence import Sequence
 import hashlib
 import uuid
 
-__version__ = '1.0.4'
+__version__ = '1.0.5'
 
 DISPLAY_TITLE = r"""
        _           _ _                     _         
@@ -152,8 +152,12 @@ def apply_json_tags(ds, json_content):
                     value = eval(value)
                 except Exception:
                     print(f"Failed to parse list for {key}: {value}")
-            setattr(ds, key, value)
-            print(f"Added standard tag: {key} = {value}")
+            try:
+                setattr(ds, key, value)
+                print(f"Added standard tag: {key} = {value}")
+            except Exception as ex:
+                print(f"Warning: Unable to add {key} = {value}")
+
         else:
             # Create ConceptNameCodeSequence item
             concept_item = Dataset()
@@ -174,7 +178,6 @@ def apply_json_tags(ds, json_content):
 
         # Create the full ContentSequence (with multiple items if needed)
         ds.ContentSequence = Sequence(content_list)
-        ds.Manufacturer = "ChRIS"
 
 
 def create_base_dataset():
@@ -264,13 +267,20 @@ def create_dicom(
             "BitsStored",
             "HighBit",
             "PixelRepresentation",
+            "PixelSpacing",
             "SeriesNumber",
             "SOPClassUID",
             "InstanceNumber",
+            "ImageOrientationPatient",
+            "ImagePositionPatient",
+            "ImageType",
+            "PatientPosition",
             "Modality",
             "NumberOfFrames",
             "StudyInstanceUID",
-            "SeriesInstanceUID"
+            "SeriesInstanceUID",
+            "WindowCenter",
+            "WindowWidth"
         ]
 
         # copy additional tags specified to preserve from CLI
@@ -291,6 +301,7 @@ def create_dicom(
         ds.StudyInstanceUID = anonymize_uid_deterministic(ds.StudyInstanceUID)
         ds.SeriesInstanceUID = anonymize_uid_deterministic(ds.SeriesInstanceUID)
         ds.SOPInstanceUID = generate_uid()
+        ds.setdefault("Manufacturer", "ChRIS")
 
     # Create Structure Report from JSON
     else:
