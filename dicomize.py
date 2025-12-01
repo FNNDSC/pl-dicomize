@@ -22,7 +22,7 @@ from pydicom.sequence import Sequence
 import hashlib
 import uuid
 
-__version__ = '1.0.5'
+__version__ = '1.0.6'
 
 DISPLAY_TITLE = r"""
        _           _ _                     _         
@@ -279,6 +279,7 @@ def create_dicom(
             "NumberOfFrames",
             "StudyInstanceUID",
             "SeriesInstanceUID",
+            "SOPInstanceUID",
             "WindowCenter",
             "WindowWidth"
         ]
@@ -300,7 +301,7 @@ def create_dicom(
 
         ds.StudyInstanceUID = anonymize_uid_deterministic(ds.StudyInstanceUID)
         ds.SeriesInstanceUID = anonymize_uid_deterministic(ds.SeriesInstanceUID)
-        ds.SOPInstanceUID = generate_uid()
+        ds.SOPInstanceUID = anonymize_uid_deterministic(ds.SOPInstanceUID)
         ds.setdefault("Manufacturer", "ChRIS")
 
     # Create Structure Report from JSON
