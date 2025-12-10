@@ -22,7 +22,7 @@ from pydicom.sequence import Sequence
 import hashlib
 import uuid
 
-__version__ = '1.0.6'
+__version__ = '1.0.7'
 
 DISPLAY_TITLE = r"""
        _           _ _                     _         
@@ -49,7 +49,7 @@ parser.add_argument(
 parser.add_argument(
     '--jsonFile',
     type=str,
-    default="json",
+    default="",
     help='Path to JSON file'
 )
 parser.add_argument(
@@ -78,19 +78,34 @@ parser.add_argument(
 )
 
 def serialize_json(options, inputdir: Path):
-    json_path_list = list(inputdir.glob(f"**/{options.jsonFile}"))
-    json_path = json_path_list[0] if json_path_list else ""
-    tag_dict = {}
+    """
+    Load JSON either from a structure (--tagStruct) or a file (--jsonFile).
+    Only one of the two may be specified.
+    """
 
     # Either json file or json structure could be specified but not both
-    if options.tagStruct and json_path:
-        print("Either json file or json structure could be specified but not both")
-        return tag_dict
+    if options.tagStruct and options.jsonFile:
+        raise ValueError("Specify either --tagStruct or --jsonFile, but not both.")
+
     if options.tagStruct:
-        tag_dict = json.loads(options.tagStruct)
-    if json_path:
-        tag_dict = load_json(json_path)
-    return tag_dict
+        try:
+            return json.loads(options.tagStruct)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON in --tagStruct: {e}")
+
+    if options.jsonFile:
+        json_path_list = list(inputdir.glob(f"**/{options.jsonFile}"))
+
+        if not json_path_list:
+            raise FileNotFoundError(
+                f"Specified JSON file '{options.jsonFile}' was not found under {inputdir}"
+            )
+
+        # If multiple matches, choose first
+        json_path = json_path_list[0]
+        return load_json(json_path)
+
+    return {}
 
 def load_json(json_file):
     if not json_file:
