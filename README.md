@@ -4,18 +4,21 @@
 [![MIT License](https://img.shields.io/github/license/fnndsc/pl-dicomize)](https://github.com/FNNDSC/pl-dicomize/blob/main/LICENSE)
 [![ci](https://github.com/FNNDSC/pl-dicomize/actions/workflows/ci.yml/badge.svg)](https://github.com/FNNDSC/pl-dicomize/actions/workflows/ci.yml)
 
-`pl-dicomize` is a [_ChRIS_](https://chrisproject.org/)
-_ds_ plugin which takes in ...  as input files and
-creates ... as output files.
+`pl-dicomize` is a [_ChRIS_](https://chrisproject.org/) _ds_ plugin that **generates DICOM files** from existing DICOMs, images, or empty templates. It supports custom DICOM headers, tag copying, and structured reporting sequence headers.
+
+---
 
 ## Abstract
 
-...
+A ChRIS plugin to generate DICOM files dynamically. Input can be existing DICOMs, images, or empty templates. The plugin allows specifying DICOM headers via JSON, copying tags from existing DICOMs, and configuring SR concept headers.
+
+---
 
 ## Installation
 
-`pl-dicomize` is a _[ChRIS](https://chrisproject.org/) plugin_, meaning it can
-run from either within _ChRIS_ or the command-line.
+`pl-dicomize` is a _[ChRIS](https://chrisproject.org/) plugin_, meaning it can run from either within _ChRIS_ or from the command line using container technologies like [Apptainer](https://apptainer.org/).
+
+---
 
 ## Local Usage
 
@@ -31,6 +34,15 @@ To print its available options, run:
 ```shell
 apptainer exec docker://fnndsc/pl-dicomize dicomize --help
 ```
+| Argument          | Default   | Description                                                |
+| ----------------- | --------- | ---------------------------------------------------------- |
+| `-V`, `--version` | —         | Show plugin version                                        |
+| `--pattern`       | `"dcm"`   | File pattern to include (triggers PathMapper on input dir) |
+| `--jsonFile`      | `""`      | Path to JSON file with DICOM header definitions            |
+| `--tagStruct`     | `""`      | DICOM headers as a stringified JSON                        |
+| `--copy-tags`     | `""`      | Comma-separated list of tags to copy from existing DICOMs  |
+| `--createFrom`    | `"empty"` | Generate new DICOM from: `dicom`, `image`, or `empty`      |
+| `--conceptName`   | `""`      | Header of concept sequence, required for SR generation     |
 
 ## Examples
 
@@ -42,6 +54,18 @@ First, create the input directory and move input data into it.
 mkdir incoming/ outgoing/
 mv some.dat other.dat incoming/
 apptainer exec docker://fnndsc/pl-dicomize:latest dicomize [--args] incoming/ outgoing/
+```
+
+### Using Optional Arguments
+```shell
+apptainer exec docker://fnndsc/pl-dicomize:latest dicomize \
+    --pattern "dcm" \
+    --jsonFile "/path/to/headers.json" \
+    --tagStruct '{"PatientName":"Anonymous","StudyDate":"20230101"}' \
+    --copy-tags "PatientID,StudyInstanceUID" \
+    --createFrom "dicom" \
+    --conceptName "MySRConcept" \
+    incoming/ outgoing/
 ```
 
 ## Development
